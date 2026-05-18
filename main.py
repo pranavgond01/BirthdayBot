@@ -9,10 +9,13 @@ import asyncio
 import re
 from PIL import Image, ImageDraw, ImageFont
 import io
+import random
 
+# ================= LOAD ENV =================
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+# ================= CONFIG =================
 DB_NAME = "birthdays.db"
 
 ROLE_GANG = "🎂 Birthday Gang"
@@ -22,24 +25,24 @@ ROLE_GIRL = "🎀 Birthday Girl"
 DEFAULT_WISH = (
     "🎉🎂 **Happiest Birthday {mention}!** 🎂🎉\n\n"
     "🥳 Congratulations for being **{age} years old!**\n"
-    "May your day be filled with happiness, success, love, and amazing memories! ✨\n\n"
+    "✨ Wishing you happiness, success, love & amazing memories!\n\n"
     "🎁 You got the **{role}** role for 24 hours!"
 )
 
 PRIVATE_WISH = (
     "🎉🎂 **Happiest Birthday {mention}!** 🎂🎉\n\n"
-    "🥳 Wishing you happiness, success, love, and amazing memories! ✨\n\n"
+    "✨ Wishing you happiness, success & endless joy!\n\n"
     "🎁 You got the **{role}** role for 24 hours!"
 )
 
+# ================= DISCORD =================
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-
-# ---------------- DATABASE ----------------
+# ================= DATABASE =================
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -50,247 +53,165 @@ def init_db():
         user_id INTEGER,
         day INTEGER,
         month INTEGER,
-        year INTEGER DEFAULT 2000,
+        year INTEGER,
         role_type TEXT DEFAULT 'gang',
         private INTEGER DEFAULT 0,
         PRIMARY KEY (guild_id, user_id)
     )
     """)
 
-    cur.execute("PRAGMA table_info(birthdays)")
-    cols = [c[1] for c in cur.fetchall()]
-
-    if "year" not in cols:
-        cur.execute("ALTER TABLE birthdays ADD COLUMN year INTEGER DEFAULT 2000")
-    if "role_type" not in cols:
-        cur.execute("ALTER TABLE birthdays ADD COLUMN role_type TEXT DEFAULT 'gang'")
-    if "private" not in cols:
-        cur.execute("ALTER TABLE birthdays ADD COLUMN private INTEGER DEFAULT 0")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        guild_id INTEGER PRIMARY KEY,
+        birthday_channel INTEGER,
+        custom_message TEXT
+    )
+    """)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS active_roles (
         guild_id INTEGER,
         user_id INTEGER,
         role_name TEXT,
-        remove_time TEXT,
-        PRIMARY KEY (guild_id, user_id, role_name)
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS wished_today (
-        guild_id INTEGER,
-        user_id INTEGER,
-        date TEXT,
-        PRIMARY KEY (guild_id, user_id, date)
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS settings (
-        guild_id INTEGER PRIMARY KEY,
-        birthday_channel_id INTEGER,
-        custom_wish TEXT
+        remove_time TEXT
     )
     """)
 
     conn.commit()
     conn.close()
 
-
-def save_birthday(guild_id, user_id, day, month, year, role_type="gang", private=0):
+def save_birthday(guild_id, user_id, day, month, year, role_type, private):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
     INSERT OR REPLACE INTO birthdays
-    (guild_id, user_id, day, month, year, role_type, private)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (guild_id, user_id, day, month, year, role_type, private))
+    """, (
+        guild_id,
+        user_id,
+        day,
+        month,
+        year,
+        role_type,
+        private
+    ))
 
     conn.commit()
     conn.close()
-
 
 def get_user_birthday(guild_id, user_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT day, month, year, role_type, private FROM birthdays
+    SELECT day, month, year, role_type, private
+    FROM birthdays
     WHERE guild_id = ? AND user_id = ?
     """, (guild_id, user_id))
 
     data = cur.fetchone()
+
     conn.close()
     return data
-
-
-def delete_user_birthday(guild_id, user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    DELETE FROM birthdays
-    WHERE guild_id = ? AND user_id = ?
-    """, (guild_id, user_id))
-
-    conn.commit()
-    conn.close()
-
 
 def get_today_birthdays(day, month):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT guild_id, user_id, year, role_type, private FROM birthdays
+    SELECT guild_id, user_id, year, role_type, private
+    FROM birthdays
     WHERE day = ? AND month = ?
     """, (day, month))
 
     data = cur.fetchall()
+
     conn.close()
     return data
 
-
-def get_guild_birthdays(guild_id):
+def get_all_birthdays(guild_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT user_id, day, month, year, role_type, private FROM birthdays
+    SELECT user_id, day, month, year
+    FROM birthdays
     WHERE guild_id = ?
     """, (guild_id,))
 
     data = cur.fetchall()
+
     conn.close()
     return data
-
-
-def add_active_role(guild_id, user_id, role_name, remove_time):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    INSERT OR REPLACE INTO active_roles
-    (guild_id, user_id, role_name, remove_time)
-    VALUES (?, ?, ?, ?)
-    """, (guild_id, user_id, role_name, remove_time))
-
-    conn.commit()
-    conn.close()
-
-
-def get_expired_roles():
-    now = datetime.now().isoformat()
-
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT guild_id, user_id, role_name FROM active_roles
-    WHERE remove_time <= ?
-    """, (now,))
-
-    data = cur.fetchall()
-    conn.close()
-    return data
-
-
-def remove_active_role_record(guild_id, user_id, role_name):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    DELETE FROM active_roles
-    WHERE guild_id = ? AND user_id = ? AND role_name = ?
-    """, (guild_id, user_id, role_name))
-
-    conn.commit()
-    conn.close()
-
-
-def already_wished(guild_id, user_id):
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT 1 FROM wished_today
-    WHERE guild_id = ? AND user_id = ? AND date = ?
-    """, (guild_id, user_id, today))
-
-    result = cur.fetchone()
-    conn.close()
-    return result is not None
-
-
-def mark_wished(guild_id, user_id):
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    INSERT OR IGNORE INTO wished_today
-    (guild_id, user_id, date)
-    VALUES (?, ?, ?)
-    """, (guild_id, user_id, today))
-
-    conn.commit()
-    conn.close()
-
 
 def set_birthday_channel(guild_id, channel_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    INSERT INTO settings (guild_id, birthday_channel_id)
+    INSERT OR REPLACE INTO settings
+    (guild_id, birthday_channel)
     VALUES (?, ?)
-    ON CONFLICT(guild_id) DO UPDATE SET birthday_channel_id = excluded.birthday_channel_id
     """, (guild_id, channel_id))
 
     conn.commit()
     conn.close()
 
-
-def set_custom_wish(guild_id, message):
+def get_birthday_channel(guild_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    INSERT INTO settings (guild_id, custom_wish)
+    SELECT birthday_channel
+    FROM settings
+    WHERE guild_id = ?
+    """, (guild_id,))
+
+    data = cur.fetchone()
+
+    conn.close()
+
+    if data:
+        return data[0]
+
+    return None
+
+def set_custom_message(guild_id, message):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+    INSERT OR REPLACE INTO settings
+    (guild_id, custom_message)
     VALUES (?, ?)
-    ON CONFLICT(guild_id) DO UPDATE SET custom_wish = excluded.custom_wish
     """, (guild_id, message))
 
     conn.commit()
     conn.close()
 
-
-def get_settings(guild_id):
+def get_custom_message(guild_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""
-    SELECT birthday_channel_id, custom_wish FROM settings
+    SELECT custom_message
+    FROM settings
     WHERE guild_id = ?
     """, (guild_id,))
 
     data = cur.fetchone()
+
     conn.close()
 
-    if data is None:
-        return None, None
+    if data:
+        return data[0]
 
-    return data[0], data[1]
+    return None
 
-
-# ---------------- HELPERS ----------------
+# ================= HELPERS =================
 def parse_date(text):
-    match = re.match(r"^(\d{1,2})[\/\-\s](\d{1,2})[\/\-\s](\d{4})$", text.strip())
+    match = re.match(r"^(\d{1,2})\/(\d{1,2})\/(\d{4})$", text)
 
     if not match:
         return None
@@ -298,441 +219,339 @@ def parse_date(text):
     day = int(match.group(1))
     month = int(match.group(2))
     year = int(match.group(3))
-    current_year = datetime.now().year
-
-    if year < 1900 or year > current_year:
-        return None
 
     try:
         datetime(year, month, day)
         return day, month, year
-    except ValueError:
+    except:
         return None
-
 
 def calculate_age(year):
     return datetime.now().year - year
 
-
-def role_name_from_type(role_type):
-    role_type = role_type.lower()
-
+def get_role_name(role_type):
     if role_type == "boy":
         return ROLE_BOY
-    if role_type == "girl":
+    elif role_type == "girl":
         return ROLE_GIRL
+    else:
+        return ROLE_GANG
 
-    return ROLE_GANG
-
-
-def validate_role_type(role_type):
-    role_type = role_type.lower()
-    if role_type not in ["gang", "boy", "girl"]:
-        return "gang"
-    return role_type
-
-
-async def get_or_create_role(guild, role_name):
+async def create_role_if_missing(guild, role_name):
     role = discord.utils.get(guild.roles, name=role_name)
 
     if role:
         return role
 
-    return await guild.create_role(
-        name=role_name,
-        reason="Birthday role created automatically"
-    )
+    return await guild.create_role(name=role_name)
 
-
-async def get_birthday_channel(guild):
-    channel_id, _ = get_settings(guild.id)
-
-    if channel_id:
-        channel = guild.get_channel(int(channel_id))
-        if channel:
-            return channel
-
-    if guild.system_channel:
-        return guild.system_channel
-
-    for channel in guild.text_channels:
-        if channel.permissions_for(guild.me).send_messages:
-            return channel
-
-    return None
-
-
+# ================= PREMIUM CARD =================
 async def make_card(member, age_text):
-    width = 1100
-    height = 550
+    width = 1200
+    height = 600
 
-    # Background image
-    img = Image.new("RGB", (width, height), (18, 18, 35))
+    img = Image.new("RGB", (width, height), (25, 20, 55))
     draw = ImageDraw.Draw(img)
 
     # Gradient background
     for y in range(height):
-        r = int(80 + (y / height) * 120)
-        g = int(40 + (y / height) * 60)
-        b = int(170 + (y / height) * 50)
-
-        draw.line(
-            [(0, y), (width, y)],
-            fill=(r, g, b)
-        )
-
-    # Decorative glow circles
-    glow_colors = [
-        (255, 105, 180),
-        (255, 215, 0),
-        (120, 255, 200),
-        (180, 120, 255)
-    ]
-
-    circles = [
-        (50, 50, 180),
-        (850, 40, 200),
-        (780, 340, 220),
-        (120, 350, 160),
-    ]
-
-    for i, (x, y, size) in enumerate(circles):
-        color = glow_colors[i % len(glow_colors)]
-
-        draw.ellipse(
-            (x, y, x + size, y + size),
-            fill=color
-        )
-
-    # Transparent overlay effect
-    overlay = Image.new("RGBA", (width, height), (255, 255, 255, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-
-    overlay_draw.rounded_rectangle(
-        (70, 70, 1030, 480),
-        radius=45,
-        fill=(255, 255, 255, 220),
-        outline=(255, 215, 0),
-        width=6
-    )
-
-    img = Image.alpha_composite(
-        img.convert("RGBA"),
-        overlay
-    ).convert("RGB")
-
-    draw = ImageDraw.Draw(img)
-
-    # Left accent bar
-    draw.rounded_rectangle(
-        (70, 70, 120, 480),
-        radius=45,
-        fill=(255, 105, 180)
-    )
+        r = int(45 + (y / height) * 120)
+        g = int(25 + (y / height) * 65)
+        b = int(95 + (y / height) * 120)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
 
     # Fonts
     try:
-        title_font = ImageFont.truetype("arial.ttf", 72)
-        name_font = ImageFont.truetype("arial.ttf", 56)
+        title_font = ImageFont.truetype("arialbd.ttf", 78)
+        name_font = ImageFont.truetype("arialbd.ttf", 58)
         text_font = ImageFont.truetype("arial.ttf", 34)
         small_font = ImageFont.truetype("arial.ttf", 26)
-        emoji_font = ImageFont.truetype("seguiemj.ttf", 48)
+        server_font = ImageFont.truetype("arialbd.ttf", 30)
     except:
         title_font = ImageFont.load_default()
         name_font = ImageFont.load_default()
         text_font = ImageFont.load_default()
         small_font = ImageFont.load_default()
-        emoji_font = ImageFont.load_default()
+        server_font = ImageFont.load_default()
 
-    # Confetti particles
-    import random
+    # Glow circles
+    glow_items = [
+        (40, 40, 240, (255, 105, 180)),
+        (900, 40, 260, (255, 215, 0)),
+        (830, 380, 260, (120, 255, 220)),
+        (90, 400, 180, (180, 130, 255)),
+    ]
 
-    for _ in range(80):
-        x = random.randint(0, width)
-        y = random.randint(0, height)
+    for x, y, size, color in glow_items:
+        draw.ellipse((x, y, x + size, y + size), fill=color)
+
+    # Main card
+    draw.rounded_rectangle(
+        (80, 80, 1120, 520),
+        radius=45,
+        fill=(255, 255, 255),
+        outline=(255, 220, 90),
+        width=6
+    )
+
+    # Header
+    draw.rounded_rectangle(
+        (80, 80, 1120, 155),
+        radius=45,
+        fill=(255, 105, 180)
+    )
+
+    draw.rectangle((80, 125, 1120, 155), fill=(255, 105, 180))
+
+    # Confetti
+    for _ in range(100):
+        x = random.randint(80, 1120)
+        y = random.randint(80, 520)
 
         color = random.choice([
             (255, 215, 0),
             (255, 105, 180),
-            (120, 255, 200),
+            (120, 255, 220),
+            (130, 130, 255),
             (255, 255, 255),
         ])
 
-        size = random.randint(4, 10)
+        size = random.randint(4, 9)
 
-        draw.ellipse(
-            (x, y, x + size, y + size),
-            fill=color
-        )
+        draw.ellipse((x, y, x + size, y + size), fill=color)
+
+    # Server logo
+    try:
+        if member.guild.icon:
+            server_icon_bytes = await member.guild.icon.replace(size=256).read()
+
+            server_icon = Image.open(io.BytesIO(server_icon_bytes)).convert("RGBA")
+            server_icon = server_icon.resize((70, 70))
+
+            server_mask = Image.new("L", (70, 70), 0)
+            server_mask_draw = ImageDraw.Draw(server_mask)
+            server_mask_draw.ellipse((0, 0, 70, 70), fill=255)
+
+            draw.ellipse((105, 92, 185, 172), fill=(255, 255, 255))
+
+            img.paste(server_icon, (110, 97), server_mask)
+
+    except Exception as e:
+        print(e)
+
+    # Server name
+    draw.text(
+        (200, 110),
+        member.guild.name,
+        font=server_font,
+        fill=(255, 255, 255)
+    )
 
     # Avatar
     try:
-        avatar_asset = member.display_avatar.replace(size=256)
-        avatar_bytes = await avatar_asset.read()
+        avatar_bytes = await member.display_avatar.replace(size=256).read()
 
         avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-        avatar = avatar.resize((190, 190))
+        avatar = avatar.resize((200, 200))
 
-        # Circular mask
-        mask = Image.new("L", (190, 190), 0)
+        mask = Image.new("L", (200, 200), 0)
         mask_draw = ImageDraw.Draw(mask)
+        mask_draw.ellipse((0, 0, 200, 200), fill=255)
 
-        mask_draw.ellipse(
-            (0, 0, 190, 190),
-            fill=255
-        )
+        avatar_x = 135
+        avatar_y = 225
 
-        avatar_x = 150
-        avatar_y = 180
-
-        # Avatar border glow
         draw.ellipse(
-            (
-                avatar_x - 10,
-                avatar_y - 10,
-                avatar_x + 200,
-                avatar_y + 200
-            ),
+            (avatar_x - 12, avatar_y - 12, avatar_x + 212, avatar_y + 212),
             fill=(255, 215, 0)
         )
 
-        draw.ellipse(
-            (
-                avatar_x - 4,
-                avatar_y - 4,
-                avatar_x + 194,
-                avatar_y + 194
-            ),
-            fill=(255, 255, 255)
-        )
-
-        img.paste(
-            avatar,
-            (avatar_x, avatar_y),
-            mask
-        )
+        img.paste(avatar, (avatar_x, avatar_y), mask)
 
     except Exception as e:
-        print(f"Avatar error: {e}")
+        print(e)
 
-    # Title glow
-    for offset in range(8, 0, -2):
-        draw.text(
-            (355 - offset, 105 - offset),
-            "HAPPY BIRTHDAY",
-            font=title_font,
-            fill=(255, 105, 180)
-        )
-
-    # Main title
+    # Title
     draw.text(
-        (355, 105),
-        "HAPPY BIRTHDAY",
+        (390, 200),
+        "🎂 HAPPY BIRTHDAY",
         font=title_font,
-        fill=(35, 35, 55)
+        fill=(35, 35, 60)
     )
 
     # Username
     draw.text(
-        (360, 220),
+        (395, 300),
         member.display_name,
         font=name_font,
-        fill=(255, 105, 180)
+        fill=(255, 80, 160)
     )
 
-    # Age message
+    # Age text
     draw.text(
-        (360, 305),
+        (395, 375),
         age_text,
         font=text_font,
-        fill=(70, 70, 80)
+        fill=(75, 75, 90)
     )
 
     # Footer
     draw.text(
-        (360, 375),
+        (395, 435),
         "✨ Wishing you happiness, success & endless joy ✨",
         font=small_font,
-        fill=(100, 100, 110)
+        fill=(105, 105, 120)
     )
 
-    # Server branding
-    server_name = member.guild.name
-
     draw.text(
-        (360, 430),
-        f"From {server_name} community 💜",
+        (395, 475),
+        f"With love from {member.guild.name} community 💜",
         font=small_font,
-        fill=(120, 120, 130)
+        fill=(130, 130, 145)
     )
 
-    # Decorative emojis
-    draw.text(
-        (900, 120),
-        "🎂",
-        font=emoji_font,
-        fill=(255, 255, 255)
-    )
-
-    draw.text(
-        (940, 210),
-        "🎉",
-        font=emoji_font,
-        fill=(255, 255, 255)
-    )
-
-    draw.text(
-        (880, 320),
-        "🎁",
-        font=emoji_font,
-        fill=(255, 255, 255)
-    )
-
-    # Save image
     buffer = io.BytesIO()
 
-    img.save(
-        buffer,
-        format="PNG",
-        quality=100
-    )
+    img.save(buffer, format="PNG", quality=100)
 
     buffer.seek(0)
 
-    return discord.File(
-        buffer,
-        filename="birthday_card.png"
-    )
+    return discord.File(buffer, filename="birthday_card.png")
 
-
+# ================= BIRTHDAY SYSTEM =================
 async def give_role_and_wish(guild, member, year, role_type, private):
-    if already_wished(guild.id, member.id):
-        return False
+    role_name = get_role_name(role_type)
 
-    role_name = role_name_from_type(role_type)
-    role = await get_or_create_role(guild, role_name)
+    role = await create_role_if_missing(guild, role_name)
 
     try:
-        await member.add_roles(role, reason="Birthday role for 24 hours")
+        await member.add_roles(role)
     except Exception as e:
-        print(f"Role add error: {e}")
-        return False
-
-    remove_time = datetime.now() + timedelta(hours=24)
-    add_active_role(guild.id, member.id, role_name, remove_time.isoformat())
+        print(e)
 
     age = calculate_age(year)
-    channel = await get_birthday_channel(guild)
-
-    _, custom_wish = get_settings(guild.id)
 
     if private:
         message = PRIVATE_WISH.format(
             mention=member.mention,
-            username=member.display_name,
-            age=age,
             role=role_name
         )
+
         age_text = "Have an amazing birthday!"
     else:
-        template = custom_wish if custom_wish else DEFAULT_WISH
+        custom = get_custom_message(guild.id)
+
+        template = custom if custom else DEFAULT_WISH
+
         message = template.format(
             mention=member.mention,
-            username=member.display_name,
             age=age,
             role=role_name
         )
+
         age_text = f"Congratulations for being {age} years old!"
 
+    card = await make_card(member, age_text)
+
+    channel_id = get_birthday_channel(guild.id)
+
+    if channel_id:
+        channel = guild.get_channel(channel_id)
+    else:
+        channel = guild.system_channel
+
     if channel:
-        card = await make_card(member, age_text)
         await channel.send(content=message, file=card)
 
-    mark_wished(guild.id, member.id)
-    return True
+    remove_time = datetime.now() + timedelta(hours=24)
 
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
 
-def days_until_birthday(day, month):
-    today = datetime.now().date()
-    year = today.year
+    cur.execute("""
+    INSERT INTO active_roles
+    VALUES (?, ?, ?, ?)
+    """, (
+        guild.id,
+        member.id,
+        role_name,
+        remove_time.isoformat()
+    ))
 
-    try:
-        birthday = datetime(year, month, day).date()
-    except ValueError:
-        return 9999
+    conn.commit()
+    conn.close()
 
-    if birthday < today:
-        birthday = datetime(year + 1, month, day).date()
-
-    return (birthday - today).days
-
-
-# ---------------- EVENTS ----------------
+# ================= EVENTS =================
 @bot.event
 async def on_ready():
     init_db()
 
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands")
+        print(f"Synced {len(synced)} commands")
     except Exception as e:
-        print(f"❌ Slash sync error: {e}")
+        print(e)
 
-    if not birthday_checker.is_running():
-        birthday_checker.start()
+    birthday_checker.start()
+    role_remover.start()
 
-    if not role_remover.is_running():
-        role_remover.start()
-
-    print(f"✅ Logged in as {bot.user}")
-
+    print(f"Logged in as {bot.user}")
 
 @bot.event
 async def on_member_join(member):
     try:
         await member.send(
-            f"👋 Welcome to **{member.guild.name}**!\n\n"
-            f"Send your birthday like this:\n"
-            f"`DD/MM/YYYY`\n\n"
-            f"Example: `25/12/2004`"
+            "🎂 Welcome!\n\nSend birthday:\n`25/12/2004`"
         )
 
         def check(msg):
-            return msg.author == member and isinstance(msg.channel, discord.DMChannel)
+            return (
+                msg.author == member and
+                isinstance(msg.channel, discord.DMChannel)
+            )
 
-        msg = await bot.wait_for("message", timeout=300, check=check)
+        msg = await bot.wait_for(
+            "message",
+            timeout=300,
+            check=check
+        )
+
         parsed = parse_date(msg.content)
 
-        if parsed is None:
-            await member.send("❌ Invalid format. Use `/setbirthday DD/MM/YYYY` in server.")
+        if not parsed:
+            await member.send("❌ Invalid format.")
             return
 
         day, month, year = parsed
-        save_birthday(member.guild.id, member.id, day, month, year, "gang", 0)
 
-        await member.send(f"✅ Birthday saved: **{day}/{month}/{year}** 🎂")
+        save_birthday(
+            member.guild.id,
+            member.id,
+            day,
+            month,
+            year,
+            "gang",
+            0
+        )
+
+        await member.send("✅ Birthday saved!")
 
         today = datetime.now()
+
         if day == today.day and month == today.month:
-            await give_role_and_wish(member.guild, member, year, "gang", 0)
-            await member.send(f"🎉 Happiest Birthday! You got the **{ROLE_GANG}** role for 24 hours!")
+            await give_role_and_wish(
+                member.guild,
+                member,
+                year,
+                "gang",
+                0
+            )
 
     except asyncio.TimeoutError:
-        try:
-            await member.send("⏰ Time expired. Use `/setbirthday DD/MM/YYYY` later.")
-        except:
-            pass
-    except Exception as e:
-        print(f"Join birthday DM error: {e}")
+        pass
 
-
-# ---------------- COMMANDS ----------------
-@bot.tree.command(name="setbirthday", description="Set your birthday")
-@app_commands.describe(
-    date="Example: 25/12/2004",
-    role_type="gang, boy, or girl",
-    private="Hide your age in public wishes?"
-)
+# ================= COMMANDS =================
+@bot.tree.command(name="setbirthday")
 async def setbirthday(
     interaction: discord.Interaction,
     date: str,
@@ -741,14 +560,13 @@ async def setbirthday(
 ):
     parsed = parse_date(date)
 
-    if parsed is None:
+    if not parsed:
         await interaction.response.send_message(
-            "❌ Invalid format. Use `DD/MM/YYYY`, example: `25/12/2004`",
+            "❌ Use DD/MM/YYYY",
             ephemeral=True
         )
         return
 
-    role_type = validate_role_type(role_type)
     day, month, year = parsed
 
     save_birthday(
@@ -762,177 +580,116 @@ async def setbirthday(
     )
 
     await interaction.response.send_message(
-        f"✅ Birthday saved: **{day}/{month}/{year}**\n"
-        f"🎭 Role type: **{role_type}**\n"
-        f"🔒 Private age: **{private}**",
+        "✅ Birthday saved!",
         ephemeral=True
     )
 
-    today = datetime.now()
-    if day == today.day and month == today.month:
-        await give_role_and_wish(interaction.guild, interaction.user, year, role_type, 1 if private else 0)
-
-
-@bot.tree.command(name="mybirthday", description="Check your birthday")
+@bot.tree.command(name="mybirthday")
 async def mybirthday(interaction: discord.Interaction):
-    data = get_user_birthday(interaction.guild.id, interaction.user.id)
+    data = get_user_birthday(
+        interaction.guild.id,
+        interaction.user.id
+    )
 
-    if data is None:
+    if not data:
         await interaction.response.send_message(
-            "❌ No birthday saved. Use `/setbirthday DD/MM/YYYY`",
+            "❌ No birthday saved.",
             ephemeral=True
         )
         return
 
     day, month, year, role_type, private = data
-    age = calculate_age(year)
 
     await interaction.response.send_message(
-        f"🎂 Birthday: **{day}/{month}/{year}**\n"
-        f"🎉 Age: **{age}**\n"
-        f"🎭 Role type: **{role_type}**\n"
-        f"🔒 Private age: **{bool(private)}**",
+        f"🎂 {day}/{month}/{year}\n"
+        f"🎭 Role: {role_type}\n"
+        f"🔒 Private: {bool(private)}",
         ephemeral=True
     )
 
-
-@bot.tree.command(name="removebirthday", description="Remove your birthday")
-async def removebirthday(interaction: discord.Interaction):
-    delete_user_birthday(interaction.guild.id, interaction.user.id)
-
-    await interaction.response.send_message(
-        "✅ Your birthday has been removed.",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="upcomingbirthdays", description="Show upcoming birthdays")
+@bot.tree.command(name="upcomingbirthdays")
 async def upcomingbirthdays(interaction: discord.Interaction):
-    data = get_guild_birthdays(interaction.guild.id)
+    data = get_all_birthdays(interaction.guild.id)
 
     if not data:
-        await interaction.response.send_message("❌ No birthdays saved yet.")
+        await interaction.response.send_message("❌ No birthdays.")
         return
 
-    sorted_data = sorted(data, key=lambda x: days_until_birthday(x[1], x[2]))[:10]
+    msg = "🎂 Upcoming Birthdays\n\n"
 
-    msg = "🎂 **Upcoming Birthdays**\n\n"
-
-    for user_id, day, month, year, role_type, private in sorted_data:
+    for user_id, day, month, year in data[:10]:
         member = interaction.guild.get_member(user_id)
-        name = member.mention if member else f"`User ID: {user_id}`"
-        left = days_until_birthday(day, month)
 
-        if private:
-            msg += f"• {name} — **{day}/{month}** — in **{left} days** 🔒\n"
-        else:
-            age = datetime.now().year - year
-            msg += f"• {name} — **{day}/{month}** — turning **{age + 1 if left != 0 else age}** — in **{left} days**\n"
+        if member:
+            msg += f"• {member.mention} → {day}/{month}/{year}\n"
 
     await interaction.response.send_message(msg)
 
-
-@bot.tree.command(name="nextbirthday", description="Show your next birthday countdown")
-async def nextbirthday(interaction: discord.Interaction):
-    data = get_user_birthday(interaction.guild.id, interaction.user.id)
-
-    if data is None:
+@bot.tree.command(name="setbirthdaychannel")
+async def setbirthdaychannel(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+    if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
-            "❌ No birthday saved. Use `/setbirthday DD/MM/YYYY`",
+            "❌ Admin only.",
             ephemeral=True
         )
         return
 
-    day, month, year, role_type, private = data
-    left = days_until_birthday(day, month)
+    set_birthday_channel(
+        interaction.guild.id,
+        channel.id
+    )
 
-    if left == 0:
-        await interaction.response.send_message("🎉 Today is your birthday! Happiest Birthday! 🎂")
-    else:
+    await interaction.response.send_message(
+        f"✅ Birthday channel set to {channel.mention}"
+    )
+
+@bot.tree.command(name="testbirthday")
+async def testbirthday(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    data = get_user_birthday(
+        interaction.guild.id,
+        member.id
+    )
+
+    if not data:
         await interaction.response.send_message(
-            f"🎂 Your next birthday is in **{left} days**!",
-            ephemeral=True
+            "❌ User has no birthday saved."
         )
-
-
-@bot.tree.command(name="setbirthdaychannel", description="Admin: set birthday wish channel")
-@app_commands.describe(channel="Channel where birthday wishes will be sent")
-async def setbirthdaychannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Only admins can use this.", ephemeral=True)
-        return
-
-    set_birthday_channel(interaction.guild.id, channel.id)
-
-    await interaction.response.send_message(
-        f"✅ Birthday wishes channel set to {channel.mention}",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="setwishmessage", description="Admin: set custom birthday wish")
-@app_commands.describe(message="Use {mention}, {username}, {age}, {role}")
-async def setwishmessage(interaction: discord.Interaction, message: str):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Only admins can use this.", ephemeral=True)
-        return
-
-    set_custom_wish(interaction.guild.id, message)
-
-    await interaction.response.send_message(
-        "✅ Custom birthday wish saved.\n"
-        "Placeholders: `{mention}`, `{username}`, `{age}`, `{role}`",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="testbirthday", description="Admin: test birthday wish")
-async def testbirthday(interaction: discord.Interaction, member: discord.Member):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Only admins can use this.", ephemeral=True)
-        return
-
-    data = get_user_birthday(interaction.guild.id, member.id)
-
-    if data is None:
-        await interaction.response.send_message("❌ This user has no saved birthday.", ephemeral=True)
         return
 
     day, month, year, role_type, private = data
-    success = await give_role_and_wish(interaction.guild, member, year, role_type, private)
 
-    if success:
-        await interaction.response.send_message(f"✅ Birthday wish sent for {member.mention}", ephemeral=True)
-    else:
-        await interaction.response.send_message("⚠️ Already wished today or role permission issue.", ephemeral=True)
-
-
-@bot.tree.command(name="birthdayhelp", description="Show birthday bot help")
-async def birthdayhelp(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "**🎂 Birthday Bot Commands**\n\n"
-        "`/setbirthday 25/12/2004 gang false`\n"
-        "`/mybirthday`\n"
-        "`/removebirthday`\n"
-        "`/upcomingbirthdays`\n"
-        "`/nextbirthday`\n"
-        "`/setbirthdaychannel #channel` admin\n"
-        "`/setwishmessage message` admin\n"
-        "`/testbirthday @user` admin\n\n"
-        "**Role types:** `gang`, `boy`, `girl`\n"
-        "**Custom message placeholders:** `{mention}`, `{username}`, `{age}`, `{role}`"
+    await give_role_and_wish(
+        interaction.guild,
+        member,
+        year,
+        role_type,
+        private
     )
 
+    await interaction.response.send_message(
+        "✅ Birthday test sent."
+    )
 
-# ---------------- LOOPS ----------------
+# ================= TASKS =================
 @tasks.loop(hours=24)
 async def birthday_checker():
     today = datetime.now()
-    birthdays = get_today_birthdays(today.day, today.month)
+
+    birthdays = get_today_birthdays(
+        today.day,
+        today.month
+    )
 
     for guild_id, user_id, year, role_type, private in birthdays:
         guild = bot.get_guild(guild_id)
-        if guild is None:
+
+        if not guild:
             continue
 
         try:
@@ -940,45 +697,59 @@ async def birthday_checker():
         except:
             continue
 
-        await give_role_and_wish(guild, member, year, role_type, private)
-
-
-@birthday_checker.before_loop
-async def before_birthday_checker():
-    await bot.wait_until_ready()
-
+        await give_role_and_wish(
+            guild,
+            member,
+            year,
+            role_type,
+            private
+        )
 
 @tasks.loop(minutes=10)
 async def role_remover():
-    expired = get_expired_roles()
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    now = datetime.now().isoformat()
+
+    cur.execute("""
+    SELECT guild_id, user_id, role_name
+    FROM active_roles
+    WHERE remove_time <= ?
+    """, (now,))
+
+    expired = cur.fetchall()
 
     for guild_id, user_id, role_name in expired:
         guild = bot.get_guild(guild_id)
 
-        if guild is None:
-            remove_active_role_record(guild_id, user_id, role_name)
+        if not guild:
             continue
 
-        role = discord.utils.get(guild.roles, name=role_name)
+        role = discord.utils.get(
+            guild.roles,
+            name=role_name
+        )
+
+        if not role:
+            continue
 
         try:
             member = await guild.fetch_member(user_id)
+
+            if role in member.roles:
+                await member.remove_roles(role)
+
         except:
-            remove_active_role_record(guild_id, user_id, role_name)
-            continue
+            pass
 
-        if role and role in member.roles:
-            try:
-                await member.remove_roles(role, reason="Birthday role expired after 24 hours")
-            except Exception as e:
-                print(f"Role remove error: {e}")
+    cur.execute("""
+    DELETE FROM active_roles
+    WHERE remove_time <= ?
+    """, (now,))
 
-        remove_active_role_record(guild_id, user_id, role_name)
+    conn.commit()
+    conn.close()
 
-
-@role_remover.before_loop
-async def before_role_remover():
-    await bot.wait_until_ready()
-
-
+# ================= RUN =================
 bot.run(TOKEN)
