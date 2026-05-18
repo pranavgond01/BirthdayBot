@@ -476,12 +476,33 @@ async def make_card(member, age_text):
         draw.ellipse((logo_x, logo_y, logo_x + logo_size, logo_y + logo_size), fill=(90, 70, 150))
 
     # Server name in header
+    # ===== CLEAR SERVER NAME =====
+
+server_name = member.guild.name.upper()
+
+# Background glow for readability
+for offset in range(8, 0, -2):
     draw.text(
-        (205, 112),
-        member.guild.name,
+        (205 - offset, 108 - offset),
+        server_name,
         font=server_font,
-        fill=(255, 255, 255)
+        fill=(120, 30, 160)
     )
+
+# Main clean text
+draw.text(
+    (205, 110),
+    server_name,
+    font=server_font,
+    fill=(255, 255, 255)
+)
+
+# Small underline
+draw.rounded_rectangle(
+    (205, 155, 205 + min(len(server_name) * 18, 500), 162),
+    radius=5,
+    fill=(255, 215, 0)
+)
 
     draw.text(
         (940, 116),
