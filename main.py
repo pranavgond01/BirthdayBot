@@ -362,30 +362,247 @@ async def get_birthday_channel(guild):
     return None
 
 
-def make_card(username, age_text):
-    img = Image.new("RGB", (900, 450), (255, 230, 240))
+async def make_card(member, age_text):
+    width = 1100
+    height = 550
+
+    # Background image
+    img = Image.new("RGB", (width, height), (18, 18, 35))
     draw = ImageDraw.Draw(img)
 
+    # Gradient background
+    for y in range(height):
+        r = int(80 + (y / height) * 120)
+        g = int(40 + (y / height) * 60)
+        b = int(170 + (y / height) * 50)
+
+        draw.line(
+            [(0, y), (width, y)],
+            fill=(r, g, b)
+        )
+
+    # Decorative glow circles
+    glow_colors = [
+        (255, 105, 180),
+        (255, 215, 0),
+        (120, 255, 200),
+        (180, 120, 255)
+    ]
+
+    circles = [
+        (50, 50, 180),
+        (850, 40, 200),
+        (780, 340, 220),
+        (120, 350, 160),
+    ]
+
+    for i, (x, y, size) in enumerate(circles):
+        color = glow_colors[i % len(glow_colors)]
+
+        draw.ellipse(
+            (x, y, x + size, y + size),
+            fill=color
+        )
+
+    # Transparent overlay effect
+    overlay = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    overlay_draw.rounded_rectangle(
+        (70, 70, 1030, 480),
+        radius=45,
+        fill=(255, 255, 255, 220),
+        outline=(255, 215, 0),
+        width=6
+    )
+
+    img = Image.alpha_composite(
+        img.convert("RGBA"),
+        overlay
+    ).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+
+    # Left accent bar
+    draw.rounded_rectangle(
+        (70, 70, 120, 480),
+        radius=45,
+        fill=(255, 105, 180)
+    )
+
+    # Fonts
     try:
-        big_font = ImageFont.truetype("arial.ttf", 60)
-        med_font = ImageFont.truetype("arial.ttf", 38)
-        small_font = ImageFont.truetype("arial.ttf", 28)
+        title_font = ImageFont.truetype("arial.ttf", 72)
+        name_font = ImageFont.truetype("arial.ttf", 56)
+        text_font = ImageFont.truetype("arial.ttf", 34)
+        small_font = ImageFont.truetype("arial.ttf", 26)
+        emoji_font = ImageFont.truetype("seguiemj.ttf", 48)
     except:
-        big_font = ImageFont.load_default()
-        med_font = ImageFont.load_default()
+        title_font = ImageFont.load_default()
+        name_font = ImageFont.load_default()
+        text_font = ImageFont.load_default()
         small_font = ImageFont.load_default()
+        emoji_font = ImageFont.load_default()
 
-    draw.rounded_rectangle((30, 30, 870, 420), radius=35, fill=(255, 255, 255), outline=(255, 120, 170), width=6)
-    draw.text((90, 90), "🎂 Happiest Birthday!", fill=(40, 40, 40), font=big_font)
-    draw.text((90, 190), username, fill=(80, 80, 80), font=med_font)
-    draw.text((90, 260), age_text, fill=(90, 90, 90), font=small_font)
-    draw.text((90, 330), "Wishing you happiness and success ✨", fill=(90, 90, 90), font=small_font)
+    # Confetti particles
+    import random
 
+    for _ in range(80):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+
+        color = random.choice([
+            (255, 215, 0),
+            (255, 105, 180),
+            (120, 255, 200),
+            (255, 255, 255),
+        ])
+
+        size = random.randint(4, 10)
+
+        draw.ellipse(
+            (x, y, x + size, y + size),
+            fill=color
+        )
+
+    # Avatar
+    try:
+        avatar_asset = member.display_avatar.replace(size=256)
+        avatar_bytes = await avatar_asset.read()
+
+        avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+        avatar = avatar.resize((190, 190))
+
+        # Circular mask
+        mask = Image.new("L", (190, 190), 0)
+        mask_draw = ImageDraw.Draw(mask)
+
+        mask_draw.ellipse(
+            (0, 0, 190, 190),
+            fill=255
+        )
+
+        avatar_x = 150
+        avatar_y = 180
+
+        # Avatar border glow
+        draw.ellipse(
+            (
+                avatar_x - 10,
+                avatar_y - 10,
+                avatar_x + 200,
+                avatar_y + 200
+            ),
+            fill=(255, 215, 0)
+        )
+
+        draw.ellipse(
+            (
+                avatar_x - 4,
+                avatar_y - 4,
+                avatar_x + 194,
+                avatar_y + 194
+            ),
+            fill=(255, 255, 255)
+        )
+
+        img.paste(
+            avatar,
+            (avatar_x, avatar_y),
+            mask
+        )
+
+    except Exception as e:
+        print(f"Avatar error: {e}")
+
+    # Title glow
+    for offset in range(8, 0, -2):
+        draw.text(
+            (355 - offset, 105 - offset),
+            "HAPPY BIRTHDAY",
+            font=title_font,
+            fill=(255, 105, 180)
+        )
+
+    # Main title
+    draw.text(
+        (355, 105),
+        "HAPPY BIRTHDAY",
+        font=title_font,
+        fill=(35, 35, 55)
+    )
+
+    # Username
+    draw.text(
+        (360, 220),
+        member.display_name,
+        font=name_font,
+        fill=(255, 105, 180)
+    )
+
+    # Age message
+    draw.text(
+        (360, 305),
+        age_text,
+        font=text_font,
+        fill=(70, 70, 80)
+    )
+
+    # Footer
+    draw.text(
+        (360, 375),
+        "✨ Wishing you happiness, success & endless joy ✨",
+        font=small_font,
+        fill=(100, 100, 110)
+    )
+
+    # Server branding
+    server_name = member.guild.name
+
+    draw.text(
+        (360, 430),
+        f"From {server_name} community 💜",
+        font=small_font,
+        fill=(120, 120, 130)
+    )
+
+    # Decorative emojis
+    draw.text(
+        (900, 120),
+        "🎂",
+        font=emoji_font,
+        fill=(255, 255, 255)
+    )
+
+    draw.text(
+        (940, 210),
+        "🎉",
+        font=emoji_font,
+        fill=(255, 255, 255)
+    )
+
+    draw.text(
+        (880, 320),
+        "🎁",
+        font=emoji_font,
+        fill=(255, 255, 255)
+    )
+
+    # Save image
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
+
+    img.save(
+        buffer,
+        format="PNG",
+        quality=100
+    )
+
     buffer.seek(0)
 
-    return discord.File(buffer, filename="birthday_card.png")
+    return discord.File(
+        buffer,
+        filename="birthday_card.png"
+    )
 
 
 async def give_role_and_wish(guild, member, year, role_type, private):
@@ -428,7 +645,7 @@ async def give_role_and_wish(guild, member, year, role_type, private):
         age_text = f"Congratulations for being {age} years old!"
 
     if channel:
-        card = make_card(member.display_name, age_text)
+        card = await make_card(member, age_text)
         await channel.send(content=message, file=card)
 
     mark_wished(guild.id, member.id)
