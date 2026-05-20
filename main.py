@@ -84,6 +84,14 @@ def init_db():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS birthday_prompts (
+        guild_id INTEGER,
+        user_id INTEGER,
+        PRIMARY KEY (guild_id, user_id)
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -262,6 +270,48 @@ def mark_wished(guild_id, user_id):
     conn.close()
 
 
+def add_birthday_prompt(guild_id, user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+    INSERT OR IGNORE INTO birthday_prompts
+    VALUES (?, ?)
+    """, (guild_id, user_id))
+
+    conn.commit()
+    conn.close()
+
+
+def get_birthday_prompt(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT guild_id FROM birthday_prompts
+    WHERE user_id = ?
+    LIMIT 1
+    """, (user_id,))
+
+    data = cur.fetchone()
+    conn.close()
+
+    return data[0] if data else None
+
+
+def remove_birthday_prompt(guild_id, user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+    DELETE FROM birthday_prompts
+    WHERE guild_id = ? AND user_id = ?
+    """, (guild_id, user_id))
+
+    conn.commit()
+    conn.close()
+
+
 # ================= HELPERS =================
 def parse_date(text):
     match = re.match(r"^(\d{1,2})[\/\-\s](\d{1,2})[\/\-\s](\d{4})$", text.strip())
@@ -348,6 +398,30 @@ async def get_birthday_channel(guild):
     return None
 
 
+async def send_birthday_request_dm(member):
+    if member.bot:
+        return False
+
+    if get_user_birthday(member.guild.id, member.id):
+        return False
+
+    try:
+        await member.send(
+            f"👋 Hello **{member.display_name}**!\n\n"
+            f"🎂 **{member.guild.name}** server birthday system is now active.\n\n"
+            f"Please send your birthday in this format:\n"
+            f"`DD/MM/YYYY`\n\n"
+            f"Example: `25/12/2004`\n\n"
+            f"Or use `/setbirthday 25/12/2004` inside the server."
+        )
+
+        add_birthday_prompt(member.guild.id, member.id)
+        return True
+
+    except Exception:
+        return False
+
+
 def fit_text(draw, text, font_path, max_width, start_size, min_size=22):
     size = start_size
 
@@ -388,14 +462,12 @@ async def make_card(member, age_text):
     img = Image.new("RGB", (width, height), (35, 20, 80))
     draw = ImageDraw.Draw(img)
 
-    # Smooth readable gradient
     for y in range(height):
         r = int(35 + (y / height) * 65)
         g = int(25 + (y / height) * 35)
         b = int(95 + (y / height) * 85)
         draw.line([(0, y), (width, y)], fill=(r, g, b))
 
-    # Soft glow background
     glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     glow = ImageDraw.Draw(glow_layer)
 
@@ -407,7 +479,6 @@ async def make_card(member, age_text):
     img = Image.alpha_composite(img.convert("RGBA"), glow_layer).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    # Fonts
     try:
         title_path = "arialbd.ttf"
         regular_path = "arial.ttf"
@@ -426,7 +497,6 @@ async def make_card(member, age_text):
         server_font = ImageFont.load_default()
         tag_font = ImageFont.load_default()
 
-    # Main card shadow
     shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
 
@@ -440,7 +510,6 @@ async def make_card(member, age_text):
     img = Image.alpha_composite(img.convert("RGBA"), shadow).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    # Main white card
     draw.rounded_rectangle(
         (90, 80, 1190, 540),
         radius=45,
@@ -449,7 +518,6 @@ async def make_card(member, age_text):
         width=6
     )
 
-    # Header bar
     draw.rounded_rectangle(
         (90, 80, 1190, 170),
         radius=45,
@@ -457,7 +525,6 @@ async def make_card(member, age_text):
     )
     draw.rectangle((90, 125, 1190, 170), fill=(255, 82, 155))
 
-    # Server logo
     logo_x, logo_y, logo_size = 125, 98, 58
 
     draw.ellipse(
@@ -475,7 +542,6 @@ async def make_card(member, age_text):
     except:
         draw.ellipse((logo_x, logo_y, logo_x + logo_size, logo_y + logo_size), fill=(90, 70, 150))
 
-    # Server name in header
     draw.text(
         (205, 112),
         member.guild.name,
@@ -490,7 +556,6 @@ async def make_card(member, age_text):
         fill=(255, 255, 255)
     )
 
-    # Clean light confetti only inside card
     for _ in range(45):
         x = random.randint(140, 1130)
         y = random.randint(195, 500)
@@ -503,7 +568,6 @@ async def make_card(member, age_text):
         size = random.randint(4, 8)
         draw.rounded_rectangle((x, y, x + size + 5, y + size), radius=3, fill=color)
 
-    # Avatar area
     avatar_x, avatar_y, avatar_size = 145, 245, 210
 
     draw.ellipse(
@@ -521,7 +585,6 @@ async def make_card(member, age_text):
     except:
         draw.ellipse((avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size), fill=(230, 230, 230))
 
-    # Text section
     draw.text(
         (410, 215),
         "🎂 HAPPY BIRTHDAY",
@@ -557,7 +620,6 @@ async def make_card(member, age_text):
         fill=(120, 120, 145)
     )
 
-    # Small cake decoration
     draw.text((1050, 230), "🎁", font=title_font, fill=(35, 30, 70))
     draw.text((1080, 320), "🎉", font=title_font, fill=(35, 30, 70))
 
@@ -637,42 +699,92 @@ async def on_ready():
 
 
 @bot.event
-async def on_member_join(member):
+async def on_guild_join(guild):
+    sent = 0
+    failed = 0
+
+    print(f"✅ Bot added to server: {guild.name}")
+
     try:
-        await member.send(
-            f"👋 Welcome to **{member.guild.name}**!\n\n"
-            f"Send your birthday in this format:\n"
-            f"`DD/MM/YYYY`\n\n"
-            f"Example: `25/12/2004`"
-        )
+        async for member in guild.fetch_members(limit=None):
+            if member.bot:
+                continue
 
-        def check(msg):
-            return msg.author == member and isinstance(msg.channel, discord.DMChannel)
+            success = await send_birthday_request_dm(member)
 
-        msg = await bot.wait_for("message", timeout=300, check=check)
-        parsed = parse_date(msg.content)
+            if success:
+                sent += 1
+            else:
+                failed += 1
 
-        if not parsed:
-            await member.send("❌ Invalid format. Use `/setbirthday DD/MM/YYYY` in server.")
+            await asyncio.sleep(2)
+
+    except Exception as e:
+        print(f"Old members DM error: {e}")
+
+    print(f"📩 Birthday DM sent: {sent}, failed/skipped: {failed}")
+
+
+@bot.event
+async def on_member_join(member):
+    await send_birthday_request_dm(member)
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    if isinstance(message.channel, discord.DMChannel):
+        guild_id = get_birthday_prompt(message.author.id)
+
+        if guild_id:
+            parsed = parse_date(message.content)
+
+            if not parsed:
+                await message.author.send(
+                    "❌ Invalid format. Please send birthday like `25/12/2004`"
+                )
+                return
+
+            guild = bot.get_guild(guild_id)
+
+            if not guild:
+                await message.author.send(
+                    "❌ Server not found. Please use `/setbirthday` inside the server."
+                )
+                return
+
+            day, month, year = parsed
+
+            save_birthday(
+                guild_id,
+                message.author.id,
+                day,
+                month,
+                year,
+                "gang",
+                0
+            )
+
+            remove_birthday_prompt(guild_id, message.author.id)
+
+            await message.author.send(
+                f"✅ Birthday saved successfully: **{day}/{month}/{year}** 🎂"
+            )
+
+            today = datetime.now()
+
+            if day == today.day and month == today.month:
+                try:
+                    member = await guild.fetch_member(message.author.id)
+                    await give_role_and_wish(guild, member, year, "gang", 0)
+                except Exception as e:
+                    print(f"Instant birthday wish error: {e}")
+
             return
 
-        day, month, year = parsed
-        save_birthday(member.guild.id, member.id, day, month, year, "gang", 0)
-
-        await member.send(f"✅ Birthday saved: **{day}/{month}/{year}** 🎂")
-
-        today = datetime.now()
-
-        if day == today.day and month == today.month:
-            await give_role_and_wish(member.guild, member, year, "gang", 0)
-
-    except asyncio.TimeoutError:
-        try:
-            await member.send("⏰ Time expired. Use `/setbirthday DD/MM/YYYY` later.")
-        except:
-            pass
-    except Exception as e:
-        print(f"Join DM error: {e}")
+    await bot.process_commands(message)
 
 
 # ================= SLASH COMMANDS =================
@@ -704,6 +816,8 @@ async def setbirthday(
         role_type,
         1 if private else 0
     )
+
+    remove_birthday_prompt(interaction.guild.id, interaction.user.id)
 
     await interaction.response.send_message(
         f"✅ Birthday saved: **{day}/{month}/{year}**\n"
@@ -750,6 +864,7 @@ async def mybirthday(interaction: discord.Interaction):
 @bot.tree.command(name="removebirthday", description="Remove your saved birthday")
 async def removebirthday(interaction: discord.Interaction):
     delete_user_birthday(interaction.guild.id, interaction.user.id)
+    remove_birthday_prompt(interaction.guild.id, interaction.user.id)
 
     await interaction.response.send_message(
         "✅ Your birthday has been removed.",
@@ -865,6 +980,39 @@ async def testbirthday(interaction: discord.Interaction, member: discord.Member)
     )
 
 
+@bot.tree.command(name="sendbirthdaydm", description="Admin: DM all existing members to set birthday")
+async def sendbirthdaydm(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        "📩 Sending birthday setup DM to existing members...",
+        ephemeral=True
+    )
+
+    sent = 0
+    failed = 0
+
+    async for member in interaction.guild.fetch_members(limit=None):
+        if member.bot:
+            continue
+
+        success = await send_birthday_request_dm(member)
+
+        if success:
+            sent += 1
+        else:
+            failed += 1
+
+        await asyncio.sleep(2)
+
+    await interaction.followup.send(
+        f"✅ Done!\n📩 DM sent: **{sent}**\n⚠️ Failed/skipped: **{failed}**",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="birthdayhelp", description="Show birthday bot commands")
 async def birthdayhelp(interaction: discord.Interaction):
     await interaction.response.send_message(
@@ -876,7 +1024,8 @@ async def birthdayhelp(interaction: discord.Interaction):
         "`/nextbirthday`\n"
         "`/setbirthdaychannel #channel` admin\n"
         "`/setwishmessage message` admin\n"
-        "`/testbirthday @user` admin\n\n"
+        "`/testbirthday @user` admin\n"
+        "`/sendbirthdaydm` admin\n\n"
         "**Role types:** `gang`, `boy`, `girl`\n"
         "**Custom placeholders:** `{mention}`, `{username}`, `{age}`, `{role}`"
     )
